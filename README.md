@@ -3,7 +3,7 @@
 An agent skill for writing agent skills, matching how they are laid out and
 published on this machine: one git repo per skill under `~/Programs/skills`,
 symlinked through `~/.agents/skills` into `~/.claude/skills`, committed as the
-personal identity, pushed to `cmsflash` over its SSH host alias.
+personal identity, and pushed to `cmsflash`.
 
 Authoring craft — progressive disclosure, degrees of freedom, when to split
 into `references/` — is not duplicated here. That lives in
@@ -14,13 +14,19 @@ the skill catalog, so it has to be read by path.
 ## Usage
 
 ```bash
-new_skill.py doctor              # is this machine able to publish at all
-new_skill.py init <name>         # scaffold + git init + symlink both hops
-new_skill.py check <name>        # validate conventions; FAIL blocks publish
-new_skill.py publish <name> -m "Add <name> skill"
+new_skill.py doctor                 # is this machine able to publish at all
+new_skill.py init <name>            # -> <name>-skill, linked as <name>
+new_skill.py check <name>-skill     # validate conventions; FAIL blocks publish
+new_skill.py publish <name>-skill -m "Add <name> skill"
 ```
 
-`init` sets the personal git identity on the new repo, since the global
+`init` takes the skill name; everything after it takes the directory name.
+The directory and GitHub repo carry a `-skill` suffix so a checkout is
+self-describing, while the frontmatter `name` and both symlinks stay plain
+`<name>` — that is what agents reference, so renaming a directory never
+changes what a skill is called.
+
+`init` also sets the personal git identity on the new repo, since the global
 default is the work address.
 
 No dependencies beyond Python 3.10+, `git`, and `gh`.
@@ -43,6 +49,6 @@ the keychain credential is missing.
 Symlinked into the central skill store:
 
 ```bash
-ln -s ~/Programs/skills/skill-authoring ~/.agents/skills/skill-authoring
+ln -s ~/Programs/skills/skill-authoring-skill ~/.agents/skills/skill-authoring
 ln -s ~/.agents/skills/skill-authoring ~/.claude/skills/skill-authoring
 ```

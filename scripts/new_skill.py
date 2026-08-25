@@ -70,7 +70,7 @@ TODO
 Symlinked into the central skill store:
 
 ```bash
-ln -s {root}/{name} ~/.agents/skills/{name}
+ln -s {root}/{dir_name} ~/.agents/skills/{name}
 ln -s ~/.agents/skills/{name} ~/.claude/skills/{name}
 ```
 """
@@ -84,6 +84,16 @@ def run(cmd: list[str], cwd: Path | None = None, check: bool = True, quiet: bool
     if not quiet and proc.stdout.strip():
         print(proc.stdout.strip())
     return proc
+
+
+def skill_name(dir_name: str) -> str:
+    """The skill's own name, which is the directory minus the `-skill` suffix.
+
+    They differ on purpose: the directory and GitHub repo carry the suffix so
+    a checkout is self-describing, while the skill name (frontmatter and
+    symlink) is what agents reference and must stay stable across a rename.
+    """
+    return dir_name[: -len("-skill")] if dir_name.endswith("-skill") else dir_name
 
 
 def validate_name(name: str) -> str:
@@ -110,15 +120,20 @@ def link(src: Path, dest: Path) -> None:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    name = validate_name(args.name)
-    path = SKILLS_ROOT / name
+    # Accept either form: the argument is the skill name, and the directory
+    # gets the `-skill` suffix.
+    name = skill_name(validate_name(args.name))
+    dir_name = f"{name}-skill"
+    path = SKILLS_ROOT / dir_name
     if path.exists():
         raise SystemExit(f"{path} already exists.")
 
     (path / "scripts").mkdir(parents=True)
     title = name.replace("-", " ").capitalize()
     (path / "SKILL.md").write_text(SKILL_TEMPLATE.format(name=name, title=title))
-    (path / "README.md").write_text(README_TEMPLATE.format(name=name, root=SKILLS_ROOT))
+    (path / "README.md").write_text(
+        README_TEMPLATE.format(name=name, dir_name=dir_name, root=SKILLS_ROOT)
+    )
     (path / ".gitignore").write_text(GITIGNORE)
     if not args.scripts:
         (path / "scripts").rmdir()
@@ -126,11 +141,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     run(["git", "init", "-q"], cwd=path)
     run(["git", "config", "user.name", GIT_NAME], cwd=path)
     run(["git", "config", "user.email", GIT_EMAIL], cwd=path)
-    print(f"Created {path} (git identity: {GIT_EMAIL})")
+    print(f"Created {path} (skill name: {name}, git identity: {GIT_EMAIL})")
 
     if args.link:
-        cmd_link(argparse.Namespace(name=name))
-    print("\nNext: write SKILL.md and README.md, then `new_skill.py check " f"{name}`.")
+        cmd_link(argparse.Namespace(name=dir_name))
+    print(f"\nNext: write SKILL.md and README.md, then `new_skill.py check {dir_name}`.")
     return 0
 
 
@@ -139,11 +154,14 @@ def cmd_link(args: argparse.Namespace) -> int:
     src = SKILLS_ROOT / name
     if not src.is_dir():
         raise SystemExit(f"{src} does not exist.")
+    # The link is named for the SKILL, not the directory, so renaming the
+    # directory or repo never changes what an agent references.
+    linked = skill_name(name)
     print("Linking:")
-    link(src, AGENTS_SKILLS / name)
+    link(src, AGENTS_SKILLS / linked)
     # Claude links to the .agents copy, not the source, so ~/.agents stays the
     # single hub every harness resolves through.
-    link(AGENTS_SKILLS / name, CLAUDE_SKILLS / name)
+    link(AGENTS_SKILLS / linked, CLAUDE_SKILLS / linked)
     return 0
 
 
@@ -170,9 +188,10 @@ def cmd_check(args: argparse.Namespace) -> int:
             desc = re.search(r'^description:\s*"(.+?)"\s*$', fm, re.S | re.M)
             if not fm_name:
                 problems.append("frontmatter has no name:")
-            elif fm_name.group(1).strip() != name:
+            elif fm_name.group(1).strip() != skill_name(name):
                 problems.append(
-                    f"frontmatter name {fm_name.group(1).strip()!r} != directory {name!r}"
+                    f"frontmatter name {fm_name.group(1).strip()!r} should be "
+                    f"{skill_name(name)!r} for directory {name!r}"
                 )
             if not desc:
                 problems.append('frontmatter has no quoted description: "..."')
@@ -208,7 +227,11 @@ def cmd_check(args: argparse.Namespace) -> int:
         if proc.returncode != 0:
             problems.append(f"{script.name} does not compile")
 
-    for target, label in ((AGENTS_SKILLS / name, "~/.agents"), (CLAUDE_SKILLS / name, "~/.claude")):
+    linked = skill_name(name)
+    for target, label in (
+        (AGENTS_SKILLS / linked, "~/.agents"),
+        (CLAUDE_SKILLS / linked, "~/.claude"),
+    ):
         if not target.is_symlink():
             warnings.append(f"not linked into {label} (run `new_skill.py link {name}`)")
 
@@ -231,7 +254,8 @@ def cmd_publish(args: argparse.Namespace) -> int:
     if cmd_check(argparse.Namespace(name=name)) != 0:
         raise SystemExit("Fix the FAIL items above before publishing.")
 
-    repo = args.repo or f"{name}-skill"
+    # The directory already carries the suffix, so the repo name matches it.
+    repo = args.repo or name
     slug = f"{GH_OWNER}/{repo}"
     remote_url = (
         f"git@{SSH_ALIAS}:{slug}.git" if args.ssh else f"https://github.com/{slug}.git"
@@ -250,10 +274,28 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
     exists = run(["gh", "api", f"repos/{slug}"], check=False, quiet=True).returncode == 0
     if not exists:
+        # gh's "active account" is global mutable state that other tools flip,
+        # so pin the token for this call instead of trusting whoever is active:
+        # the work account cannot create a repo under the personal one.
+        token = run(
+            ["gh", "auth", "token", "--user", GH_OWNER], check=False, quiet=True
+        ).stdout.strip()
+        env = {**os.environ, "GH_TOKEN": token} if token else None
+        if not token:
+            print(f"warn  no stored gh token for {GH_OWNER}; using the active account")
         # Create only, then set the remote by hand: --source --push would push
         # over the default SSH key, which is the work account.
         visibility = "--public" if args.public else "--private"
-        run(["gh", "repo", "create", slug, visibility, "--description", args.description])
+        proc = subprocess.run(
+            ["gh", "repo", "create", slug, visibility, "--description", args.description],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        if proc.returncode != 0:
+            sys.stderr.write(proc.stdout + proc.stderr)
+            raise SystemExit(proc.returncode)
         print(f"Created {slug}")
 
     current = run(["git", "remote"], cwd=path, quiet=True).stdout.split()

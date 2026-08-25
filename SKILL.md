@@ -1,6 +1,6 @@
 ---
 name: skill-authoring
-description: "Write a new agent skill the way this machine expects: one git repo per skill under ~/Programs/skills, symlinked through ~/.agents/skills into ~/.claude/skills, committed as the personal identity, and pushed to the cmsflash GitHub account over its SSH host alias. Use when asked to write, create, add, or publish a skill, or when a repeated workflow is worth capturing as one. Triggers: 'write a skill', 'make a skill for this', 'turn this into a skill', 'add a skill', 'publish the skill'."
+description: "Write a new agent skill the way this machine expects: one git repo per skill under ~/Programs/skills, symlinked through ~/.agents/skills into ~/.claude/skills, committed as the personal identity, and pushed to the cmsflash GitHub account. Use when asked to write, create, add, or publish a skill, or when a repeated workflow is worth capturing as one. Triggers: 'write a skill', 'make a skill for this', 'turn this into a skill', 'add a skill', 'publish the skill'."
 ---
 
 # Skill authoring
@@ -20,22 +20,28 @@ the skill catalog, so it must be read by path rather than loaded by name.
 Each skill is **its own git repository**:
 
 ```
-~/Programs/skills/<name>/
+~/Programs/skills/<name>-skill/
 ├── SKILL.md      # frontmatter + body
 ├── README.md     # human-facing, ends with an Install section
 ├── .gitignore    # __pycache__/ and *.pyc
 └── scripts/      # only if the skill ships executables
 ```
 
-Installed through a two-hop symlink chain:
+**The directory carries a `-skill` suffix; the skill name does not.** The
+directory and GitHub repo are `<name>-skill`, so a bare checkout is
+self-describing. The frontmatter `name` and both symlinks are plain `<name>`,
+because that is what agents reference — keeping it free of the suffix means
+renaming a directory or repo never changes what a skill is called.
+
+Installed through a two-hop symlink chain, named for the skill:
 
 ```
-~/Programs/skills/<name>  ←  ~/.agents/skills/<name>  ←  ~/.claude/skills/<name>
+~/Programs/skills/<name>-skill  ←  ~/.agents/skills/<name>  ←  ~/.claude/skills/<name>
 ```
 
 The second hop points at the `~/.agents` link, not at the source. `~/.agents`
-is the single hub every harness resolves through, so a skill that moves is
-repointed in one place.
+is the single hub every harness resolves through, so moving or renaming a
+skill directory is repointed in exactly one place.
 
 ## The workflow
 
@@ -65,10 +71,13 @@ lines, no ceremony. Match them rather than inventing a house style.
 python3 ~/.agents/skills/skill-authoring/scripts/new_skill.py init <name> --scripts
 ```
 
-Creates the directory, both files, `.gitignore`, runs `git init`, sets the
-**personal** identity on that repo, and symlinks both hops. Names are
-lowercase-hyphenated; the directory name and the frontmatter `name` must
-match.
+Pass the **skill name**, without the suffix. Creates
+`~/Programs/skills/<name>-skill/`, both files, `.gitignore`, runs `git init`,
+sets the **personal** identity on that repo, and symlinks both hops as
+`<name>`. Names are lowercase-hyphenated.
+
+Later commands take the **directory** name (`check <name>-skill`), since that
+is what you see in `ls`.
 
 ### 4. Write the description last
 
@@ -103,7 +112,7 @@ instead of prose. Prose invites improvisation.
 ### 6. Validate
 
 ```bash
-python3 ~/.agents/skills/skill-authoring/scripts/new_skill.py check <name>
+python3 ~/.agents/skills/skill-authoring/scripts/new_skill.py check <name>-skill
 ```
 
 Checks name/directory agreement, description shape, leftover `TODO`s,
@@ -116,12 +125,13 @@ commands were never executed is a guess.
 ### 7. Publish
 
 ```bash
-python3 ~/.agents/skills/skill-authoring/scripts/new_skill.py publish <name> \
+python3 ~/.agents/skills/skill-authoring/scripts/new_skill.py publish <name>-skill \
   -m "Add <name> skill" --description "One line for the repo"
 ```
 
-Commits, creates `cmsflash/<name>-skill` (private by default), sets an HTTPS
-remote, and pushes. Re-running is safe: an existing repo is reused.
+Commits, creates `cmsflash/<name>-skill` (private by default) matching the
+directory name, sets an HTTPS remote, and pushes. Re-running is safe: an
+existing repo is reused.
 
 **Why HTTPS and not SSH.** The `osxkeychain` credential for `github.com` is
 the personal account, so HTTPS just works. The default SSH *key* is the
