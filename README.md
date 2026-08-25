@@ -25,15 +25,18 @@ default is the work address.
 
 No dependencies beyond Python 3.10+, `git`, and `gh`.
 
-## The trap it automates
+## The trap it avoids
 
-The default `github.com` SSH key authenticates as the **work** account. A
-normal push to a personal repo therefore fails with `Repository not found`,
-which reads like the repo was never created — it was. The remote has to use
-the `github.com-cmsflash` host alias.
+Publishing uses an HTTPS remote, because the `osxkeychain` credential for
+`github.com` is the personal account.
 
-`gh repo create --source --push` trips on this too, because it pushes over
-the default key, so `publish` creates the repo and pushes as separate steps.
+The default SSH **key** is the work account, so an SSH remote to a personal
+repo fails with `Repository not found` — which reads like the repo was never
+created, when it was. `gh repo create --source --push` pushes over that same
+key, so `publish` creates the repo and pushes as separate steps.
+
+`publish --ssh` uses the `github.com-cmsflash` host alias instead, for when
+the keychain credential is missing.
 
 ## Install
 

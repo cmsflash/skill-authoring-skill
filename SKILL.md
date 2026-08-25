@@ -120,14 +120,18 @@ python3 ~/.agents/skills/skill-authoring/scripts/new_skill.py publish <name> \
   -m "Add <name> skill" --description "One line for the repo"
 ```
 
-Commits, creates `cmsflash/<name>-skill` (private by default), sets the
+Commits, creates `cmsflash/<name>-skill` (private by default), sets an HTTPS
 remote, and pushes. Re-running is safe: an existing repo is reused.
 
-**The trap this automates:** the default `github.com` SSH key authenticates
-as the *work* account, so a normal push to a personal repo fails with
-"Repository not found" — which reads like the repo does not exist. The
-remote must use the `github.com-cmsflash` host alias. `gh repo create
---source --push` hits this too, so the script creates and pushes separately.
+**Why HTTPS and not SSH.** The `osxkeychain` credential for `github.com` is
+the personal account, so HTTPS just works. The default SSH *key* is the
+**work** account, so an SSH remote to a personal repo fails with
+`Repository not found` — which reads like the repo was never created, when
+it was. `gh repo create --source --push` pushes over that same default key,
+so the script creates the repo and pushes as separate steps.
+
+`--ssh` switches to the `github.com-cmsflash` host alias, for when the
+keychain credential is missing. `doctor` reports both.
 
 ## Rewriting an existing skill
 

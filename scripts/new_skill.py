@@ -20,11 +20,14 @@ SKILLS_ROOT = Path(os.environ.get("SKILLS_ROOT", Path.home() / "Programs" / "ski
 AGENTS_SKILLS = Path(os.environ.get("AGENTS_SKILLS", Path.home() / ".agents" / "skills"))
 CLAUDE_SKILLS = Path(os.environ.get("CLAUDE_SKILLS", Path.home() / ".claude" / "skills"))
 
-# The personal account pushes over an SSH host alias, because the default
-# github.com key authenticates as the work account.
 GIT_NAME = "Zhuoran Shen"
 GIT_EMAIL = "cmsflash99@gmail.com"
 GH_OWNER = "cmsflash"
+
+# HTTPS, because the osxkeychain credential for github.com is the personal
+# account. The default SSH key is the WORK account, so an SSH remote to a
+# personal repo fails with a misleading "Repository not found"; SSH_ALIAS is
+# the escape hatch if the keychain credential is ever absent.
 SSH_ALIAS = "github.com-cmsflash"
 
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -230,7 +233,9 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
     repo = args.repo or f"{name}-skill"
     slug = f"{GH_OWNER}/{repo}"
-    ssh_url = f"git@{SSH_ALIAS}:{slug}.git"
+    remote_url = (
+        f"git@{SSH_ALIAS}:{slug}.git" if args.ssh else f"https://github.com/{slug}.git"
+    )
 
     if not run(["git", "status", "--porcelain"], cwd=path, quiet=True).stdout.strip():
         if not run(["git", "log", "-1"], cwd=path, check=False, quiet=True).returncode == 0:
@@ -245,18 +250,17 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
     exists = run(["gh", "api", f"repos/{slug}"], check=False, quiet=True).returncode == 0
     if not exists:
-        # gh creates the repo under the authenticated account; --source would
-        # also try to push over the default SSH key, which authenticates as
-        # the work account, so create only and set the remote by hand.
+        # Create only, then set the remote by hand: --source --push would push
+        # over the default SSH key, which is the work account.
         visibility = "--public" if args.public else "--private"
         run(["gh", "repo", "create", slug, visibility, "--description", args.description])
         print(f"Created {slug}")
 
     current = run(["git", "remote"], cwd=path, quiet=True).stdout.split()
     if "origin" in current:
-        run(["git", "remote", "set-url", "origin", ssh_url], cwd=path)
+        run(["git", "remote", "set-url", "origin", remote_url], cwd=path)
     else:
-        run(["git", "remote", "add", "origin", ssh_url], cwd=path)
+        run(["git", "remote", "add", "origin", remote_url], cwd=path)
 
     branch = run(["git", "branch", "--show-current"], cwd=path, quiet=True).stdout.strip()
     run(["git", "push", "-u", "origin", branch], cwd=path)
@@ -267,20 +271,36 @@ def cmd_publish(args: argparse.Namespace) -> int:
 def cmd_doctor(_: argparse.Namespace) -> int:
     """Check the machine can actually publish, before a skill needs it."""
     ok = True
-    proc = run(["ssh", "-T", f"git@{SSH_ALIAS}"], check=False, quiet=True)
-    blob = proc.stdout + proc.stderr
-    if f"Hi {GH_OWNER}!" in blob:
-        print(f"ok    ssh {SSH_ALIAS} authenticates as {GH_OWNER}")
+
+    # The stored HTTPS credential is what an ordinary push uses, so this is
+    # the check that predicts whether publishing works.
+    cred = subprocess.run(
+        ["git", "credential", "fill"],
+        input="protocol=https\nhost=github.com\n\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    user = re.search(r"^username=(.+)$", cred.stdout, re.M)
+    if user and user.group(1).strip() == GH_OWNER:
+        print(f"ok    https credential for github.com is {GH_OWNER}")
     else:
         ok = False
-        print(f"FAIL  ssh {SSH_ALIAS} did not authenticate as {GH_OWNER}: {blob.strip()[:120]}")
+        found = user.group(1).strip() if user else "none"
+        print(f"FAIL  https credential for github.com is {found!r}, expected {GH_OWNER}")
+        print(f"      fall back to `publish --ssh` (alias {SSH_ALIAS}), or re-add the credential")
+
+    proc = run(["ssh", "-T", f"git@{SSH_ALIAS}"], check=False, quiet=True)
+    blob = proc.stdout + proc.stderr
+    state = "ok   " if f"Hi {GH_OWNER}!" in blob else "warn "
+    print(f"{state} ssh fallback {SSH_ALIAS} -> {GH_OWNER}")
 
     if shutil.which("gh"):
         who = run(["gh", "api", "user", "--jq", ".login"], check=False, quiet=True).stdout.strip()
         print(f"ok    gh installed (active account: {who or 'unknown'})")
         if who != GH_OWNER:
-            print(f"      note: gh acts as {who!r}; repo creation still lands under {GH_OWNER}")
-            print("      because the slug is fully qualified, and the push uses the SSH alias.")
+            print(f"      note: gh acts as {who!r}, but the slug is fully qualified, so")
+            print(f"      repo creation still lands under {GH_OWNER}")
     else:
         ok = False
         print("FAIL  gh is not installed")
@@ -315,9 +335,10 @@ def main() -> int:
     p.add_argument("--repo", help=f"repo name (default: <name>-skill under {GH_OWNER})")
     p.add_argument("--description", default="", help="GitHub repo description")
     p.add_argument("--public", action="store_true", help="create a public repo (default private)")
+    p.add_argument("--ssh", action="store_true", help=f"use git@{SSH_ALIAS} instead of HTTPS")
     p.set_defaults(func=cmd_publish)
 
-    p = sub.add_parser("doctor", help="check ssh/gh/paths are ready to publish")
+    p = sub.add_parser("doctor", help="check credentials/gh/paths are ready to publish")
     p.set_defaults(func=cmd_doctor)
 
     args = ap.parse_args()
